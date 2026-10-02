@@ -23,47 +23,47 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 BARAJA_DIR = os.path.join(BASE_DIR, "baraja")
 
 def generar_pdf_bytes(num_tabloides, orientacion):
-    cartas = sorted([f for f in os.listdir(BARAJA_DIR) if f.lower().endswith(('.jpg','.png','.jpeg'))]) if os.path.exists(BARAJA_DIR) else []
-    if not cartas:
-        raise Exception(f"No hay cartas en {BARAJA_DIR}")
+    if not os.path.exists(BARAJA_DIR):
+        raise Exception(f"No existe carpeta baraja en {BARAJA_DIR}")
+    cartas = sorted([f for f in os.listdir(BARAJA_DIR) if f.lower().endswith(('.jpg','.jpeg','.png'))])
+    if len(cartas) < 54:
+        raise Exception(f"Solo hay {len(cartas)} cartas, necesitas 54")
 
     contador = Counter()
     buffer = io.BytesIO()
 
-    tabloid_h = (11*inch, 17*inch)
-    if "H" in orientacion:
-        PAGE_W, PAGE_H = landscape(tabloid_h)
+    if "H" in orientacion or "h" in orientacion.lower():
+        PAGE_W, PAGE_H = landscape((11*inch, 17*inch))
         J_COLS, J_ROWS = 3, 2
-        ori = "H"
     else:
-        PAGE_W, PAGE_H = portrait(tabloid_h)
+        PAGE_W, PAGE_H = portrait((11*inch, 17*inch))
         J_COLS, J_ROWS = 2, 3
-        ori = "V"
 
     c = canvas.Canvas(buffer, pagesize=(PAGE_W, PAGE_H))
 
-    for tab in range(num_tabloides):
+    for _ in range(num_tabloides):
         margen = 0.15*inch
-        sep_juego = 0.28*inch
-        area_w = PAGE_W - margen*2 - sep_juego*(J_COLS-1)
-        area_h = PAGE_H - margen*2 - sep_juego*(J_ROWS-1)
+        sep = 0.28*inch
+        area_w = PAGE_W - margen*2 - sep*(J_COLS-1)
+        area_h = PAGE_H - margen*2 - sep*(J_ROWS-1)
         juego_w = area_w / J_COLS
         juego_h = area_h / J_ROWS
 
         for jr in range(J_ROWS):
             for jc in range(J_COLS):
-                j_x = margen + jc*(juego_w + sep_juego)
-                j_y = margen + (J_ROWS-1-jr)*(juego_h + sep_juego)
+                j_x = margen + jc*(juego_w + sep)
+                j_y = margen + (J_ROWS-1-jr)*(juego_h + sep)
 
-                todas = cartas.copy()
-                todas.sort(key=lambda x: contador[x])
+                todas = sorted(cartas, key=lambda x: contador[x])
                 grandes = todas[:30]
                 random.shuffle(grandes)
-                for g in grandes:
-                    contador[g] += 1
+                for g in grandes: contador[g] += 1
 
                 chicas_rest = [x for x in cartas if x not in grandes]
                 random.shuffle(chicas_rest)
+                # Si faltan letras, repite
+                while len(chicas_rest) < len(LETRAS):
+                    chicas_rest += chicas_rest
                 mapa = {letra: img for letra, img in zip(LETRAS, chicas_rest)}
 
                 COLS, ROWS = 6, 5
@@ -75,29 +75,22 @@ def generar_pdf_bytes(num_tabloides, orientacion):
                         g_idx = col_idx*5 + r
                         grande_img = grandes[g_idx]
                         lt, lb = PLANTILLA_CHICAS[r][col_idx]
-
                         x = j_x + col_idx*cell_w
                         y = j_y + (ROWS-1-r)*cell_h
-
                         g_w = cell_w * 0.615
                         s_w = cell_w - g_w
                         s_h = cell_h / 2
-
                         try:
-                            c.drawImage(ImageReader(os.path.join(BARAJA_DIR, grande_img)), x, y, width=g_w, height=cell_h, preserveAspectRatio=False)
-                            c.drawImage(ImageReader(os.path.join(BARAJA_DIR, mapa[lt])), x+g_w, y+s_h, width=s_w, height=s_h, preserveAspectRatio=False)
-                            c.drawImage(ImageReader(os.path.join(BARAJA_DIR, mapa[lb])), x+g_w, y, width=s_w, height=s_h, preserveAspectRatio=False)
-                        except:
-                            pass
-
-                        c.setLineWidth(1.2)
+                            c.drawImage(ImageReader(os.path.join(BARAJA_DIR, grande_img)), x, y, width=g_w, height=cell_h, preserveAspectRatio=True)
+                            c.drawImage(ImageReader(os.path.join(BARAJA_DIR, mapa[lt])), x+g_w, y+s_h, width=s_w, height=s_h, preserveAspectRatio=True)
+                            c.drawImage(ImageReader(os.path.join(BARAJA_DIR, mapa[lb])), x+g_w, y, width=s_w, height=s_h, preserveAspectRatio=True)
+                        except Exception as e:
+                            print(f"Error imagen: {e}")
+                        c.setLineWidth(0.8)
                         c.rect(x, y, cell_w, cell_h)
-
-                c.setLineWidth(3.5)
+                c.setLineWidth(3)
                 c.rect(j_x, j_y, juego_w, juego_h)
-
         c.showPage()
-
     c.save()
     buffer.seek(0)
     return buffer
@@ -108,11 +101,14 @@ def index():
 
 @app.route('/generar', methods=['POST'])
 def generar():
-    num = int(request.form.get('cantidad', 5))
-    ori = request.form.get('orientacion', 'H (3x2) - Recomendado')
-    pdf_buffer = generar_pdf_bytes(num, ori)
-    fecha = datetime.now().strftime("%Y%m%d_%H%M")
-    return send_file(pdf_buffer, as_attachment=True, download_name=f"POCITOS_{num}tab_{fecha}.pdf", mimetype='application/pdf')
+    try:
+        num = int(request.form.get('cantidad', 5))
+        ori = request.form.get('orientacion', 'Horizontal')
+        pdf = generar_pdf_bytes(num, ori)
+        fecha = datetime.now().strftime("%Y%m%d_%H%M")
+        return send_file(pdf, as_attachment=True, download_name=f"POCITOS_{num}tab_{fecha}.pdf", mimetype='application/pdf')
+    except Exception as e:
+        return f"<h1>Error: {e}</h1><p>Revisa que en GitHub tengas la carpeta baraja con 54 jpg</p><a href='/'>Volver</a>", 500
 
 if __name__ == '__main__':
     app.run()
